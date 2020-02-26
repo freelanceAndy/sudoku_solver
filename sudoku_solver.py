@@ -161,15 +161,13 @@ class SudokuSolver:
          if len(value_intersection) >= len(grp):
             shared_hidden_group = [c for c in combo]
             last_grp_members = [c for c in grp if c not in combo]
-            if last_grp_members:
-               last_grp_member = last_grp_members[0]
-               last_mbr_intersect = value_intersection.intersection(last_grp_member.possible_values())
-               if len(last_mbr_intersect) >= len(value_intersection)-1:
-                  shared_hidden_group.append(last_grp_member)
+            for c in last_grp_members:
+               mbr_intersect = value_intersection.intersection(c.possible_values())
+               if len(mbr_intersect) >= len(value_intersection)-1:
+                  shared_hidden_group.append(c)
             for cell in shared_hidden_group:
                for value in outside_values:
-                  cell.add_impossible_value(value, f"hidden_{grp_size[len(grp)]}")
-                  #cell.add_impossible_value(value, f"hidden_{grp_size[len(shared_hidden_group)]}")
+                  cell.add_impossible_value(value, f"hidden_{grp_size[len(shared_hidden_group)]}")
 
    def shared_naked_values(self, grp, other_cells):
       # For strategy explanation, see: https://www.learn-sudoku.com/naked-pairs.html
