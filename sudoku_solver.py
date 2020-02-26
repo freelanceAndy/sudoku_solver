@@ -3,6 +3,7 @@ import math
 import atexit
 import argparse
 from enum import Enum
+from big_board import big_board
 from itertools import chain, combinations
 
 Entity = Enum('Entity', 'row col blk')
@@ -15,30 +16,49 @@ class SudokuSolver:
       parser.add_argument('--puzzle-file-path', type=str, required=True)
       parser.add_argument('--display-unsolved-puzzle', action='store_true')
       parser.add_argument('--silent', action='store_false')
-      parser.add_argument('--cell', action='append', default=[], help="debug helper. eg. '--cell 15 --cell 16'")
       params = parser.parse_args()
-      self.verbose = params.silent if True else False
-      self.solve_puzzle(params)
-
-   def solve_puzzle(self, params):
+      self.verbose = params.silent
       self.import_puzzle(params.puzzle_file_path, params.display_unsolved_puzzle)
-      self.loops = 0
-      self.loop_limit = 15
-      atexit.register(self.print_puzzle)
+      self.solve_puzzle()
+
+   class PuzzleSolved(Exception): pass
+   
+   def solve_puzzle(self):
+
+      atexit.register(big_board.print_board, self.puzzle)
+      atexit.register(self.print_small_board)
       atexit.register(self.validate_board)
-      atexit.register(self.solution_status)
-      atexit.register(self.print_specific_cell_info, params.cell)
-      while self.puzzle_unsolved() and self.loops < self.loop_limit:
-         self.loop_count()
-         self.set_impossible_values()
-         self.set_values()
+      atexit.register(self.print_progress)
+
+      try:
+         self.loops = 0
+         self.progress_made = True
+         while self.making_progress():
+            self.set_impossible_values()
+            self.set_values()
+         atexit.unregister(self.print_small_board)
+         atexit.unregister(self.print_progress)
+      except self.PuzzleSolved:
+         atexit.unregister(big_board.print_board)
+
+   def making_progress(self):
+      self.loops += 1
+      self.print_progress()
+      enter_loop = self.progress_made
+      self.progress_made = False
+      return enter_loop
+
+   def print_progress(self):
+      if self.verbose:
+         print(f"Current Loop: {self.loops}  Remaining Cells: {self.unsolved_cell_count}")
 
    def import_puzzle(self, puzzle_file_path, display_unsolved_puzzle):
       file_str = open(puzzle_file_path,'r').read().strip()
       self.puzzle = [self.SudokuCell(char, idx, self.verbose) for idx, char in enumerate(file_str)]
-      self.print_puzzle()
+      self.print_small_board()
+      self.unsolved_cell_count = len([cell for cell in self.puzzle if cell.value is None])
       if display_unsolved_puzzle:
-         exit()
+         sys.exit()
 
    class SudokuCell:
 
@@ -96,27 +116,11 @@ class SudokuSolver:
       def add_impossible_value(self, impossible_value, message=None, func=None):
          if impossible_value not in self.impossible_values:
             self.impossible_values.add(impossible_value)
+            self.progress_made = True
             if message and self.verbose:
                print(f"\tIMPOSSIBLE: r{self.row}c{self.col}: {impossible_value} ({message})")
             if func and self.verbose:
                func() # prints puzzle
-
-   def puzzle_unsolved(self):
-      self.unsolved_cell_count = len([cell for cell in self.puzzle if cell.value is None])
-      if self.unsolved_cell_count == 0 and self.verbose:
-         print("Complete!")
-      return 0 != self.unsolved_cell_count
-
-   def loop_count(self):
-      self.loops += 1
-      if self.loops > self.loop_limit:
-         sys.exit(f"...Puzzle unsolved")
-      self.solution_status()
-
-   def solution_status(self):
-      if self.verbose:
-         remaining_cell_msg = f" Remaining Cells: {self.unsolved_cell_count}"
-         print(f"Current Loop: {self.loops} (loop_limit={self.loop_limit}){remaining_cell_msg}")
 
    def set_impossible_values(self):
       for cell in self.puzzle:
@@ -165,6 +169,7 @@ class SudokuSolver:
             for cell in shared_hidden_group:
                for value in outside_values:
                   cell.add_impossible_value(value, f"hidden_{grp_size[len(grp)]}")
+                  #cell.add_impossible_value(value, f"hidden_{grp_size[len(shared_hidden_group)]}")
 
    def shared_naked_values(self, grp, other_cells):
       # For strategy explanation, see: https://www.learn-sudoku.com/naked-pairs.html
@@ -246,6 +251,18 @@ class SudokuSolver:
          for entity_type in Entity:
             self.solve_for_values_with_only_one_cell_left(cell, entity_type)
             self.solve_for_cells_with_only_one_value_left(cell, entity_type)
+ 
+   def assign_cell_value(self, cell, value, msg=None):
+      cell.value = value
+      if self.verbose:
+         print(msg)
+      self.unsolved_cell_count -= 1
+      self.progress_made = True
+      if self.puzzle_solved():
+         raise self.PuzzleSolved
+
+   def puzzle_solved(self):
+      return self.unsolved_cell_count == 0
 
    def solve_for_values_with_only_one_cell_left(self, cell, entity_type):
       entity_cells = self.get_ent(cell.ent(entity_type), entity_type)
@@ -257,9 +274,7 @@ class SudokuSolver:
          if len(cells_possibly_containing_missing_values) != 1:
             continue
          c = next(iter(cells_possibly_containing_missing_values))
-         c.value = missing_value
-         if self.verbose:
-            print(f"\tSOLVED: {entity_type.name}:{cell.ent(entity_type)} r{c.row}c{c.col} = {c.value} (only_one_cell_left)")
+         self.assign_cell_value(c, missing_value, msg=f"\tSOLVED: {entity_type.name}:{cell.ent(entity_type)} r{c.row}c{c.col} = {c.value} (only_one_cell_left)")
 
    def solve_for_cells_with_only_one_value_left(self, cell, entity_type):
       entity_cells = self.get_ent(cell.ent(entity_type), entity_type)
@@ -268,22 +283,15 @@ class SudokuSolver:
       missing_values = all_values - entity_values
       for c in unsolved_cells:
          if len(c.possible_values()) == 1:
-            c.value = c.possible_values().pop()
-            if self.verbose:
-               print(f"\tSOLVED: {entity_type.name}:{cell.ent(entity_type)} r{c.row}c{c.col} = {c.value} (only_one_value_left)")
+            self.assign_cell_value(c, c.possible_values().pop(), msg=f"\tSOLVED: {entity_type.name}:{cell.ent(entity_type)} r{c.row}c{c.col} = {c.value} (only_one_value_left)")
 
-   def print_puzzle(self):
+   def print_small_board(self):
       # This is borrowed code from:
       """https://tio.run/##dY9dSsQwEMff9xQhsJA0g9Tt7nZd8Ca@pB/gQre2pcr2TTyBQgdBEEVF8eMInmYuUrOpKX1QmGQy//nNP0nR1KdnedB15XGmt1Gi2Q6a9U41yq5J5WQNEcSQQLrWqhSliLwAYgmJVKniJzmfFNUmr4UQlfA4YUt4TfhC@Ep4y6UdMfINmyaM2qtR4l6g9h3jAf3sA7WX1H4TfhI@cSl/5Udr@UH4RfhsZNXLd1Z@I3wnvDfyNL3QmdjkxXktpJQHVVpkOk4N6zPT7jrhA1sC810cATsENnflDNjKnXtsASy0mG@xmeX9vyJwfF@uRvsw3l8xwAPwn@fC8qF7z9KRoQPmI6vQ8uPf7WH5Aw"""
       q=lambda x,y:x+y+x+y+x
       r=lambda a,b,c,d,e:a+q(q(b*3,c),d)+e+"\n"
       print_input = tuple([0 if x==None else int(x) for x in [c.value for c in self.puzzle]])
       print(((r(*"╔═╤╦╗")+q(q("║ %d │ %d │ %d "*3+"║\n",r(*"╟─┼╫╢")),r(*"╠═╪╬╣"))+r(*"╚═╧╩╝"))%print_input).replace(*"0 "))
-
-   def print_specific_cell_info(self, cell_ids):
-      for cell in self.puzzle:
-         if f"{cell.row}{cell.col}" in cell_ids:
-            print(f"cell_info: {cell.id} possible: {cell.possible_values()}")
 
    def validate_board(self):
       valid = True
