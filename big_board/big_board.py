@@ -8,7 +8,7 @@ big_cells = {str(child.name).split('.')[0]: open(child, 'r').read() for child in
 
 
 def print_board(puzzle_cells, no_hints=False):
-    puzzle_lookup = {cell._id: cell for cell in puzzle_cells}
+    puzzle_lookup = {f"{cell.row}{cell.col}": cell for cell in puzzle_cells}
     puzzle_str = ""
     last_cell_id = None
     last_line_number = None
