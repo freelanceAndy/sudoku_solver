@@ -7,17 +7,17 @@ board = open(board_path, 'r').read().split("\n")
 big_cells = {str(child.name).split('.')[0]: open(child, 'r').read() for child in numbers_dir.iterdir()}
 
 
-def print_board(puzzle_cells, no_hints=False):
+def render(puzzle_cells, no_hints=False):
     puzzle_lookup = {f"{cell.row}{cell.col}": cell for cell in puzzle_cells}
-    puzzle_str = ""
+    big_board_str = ""
     last_cell_id = None
     last_line_number = None
     for line_number, char_number, char in _iterate_board(board):
         if line_number != last_line_number and last_line_number != None:
-            puzzle_str += '\n'
+            big_board_str += '\n'
         last_line_number = line_number
         if char != ' ':
-            puzzle_str += char
+            big_board_str += char
             continue
         cell_row, cell_col, big_rows = _get_cell_id(puzzle_cells, line_number, char_number)
         cell_id = f"{cell_row}{cell_col}"
@@ -26,9 +26,9 @@ def print_board(puzzle_cells, no_hints=False):
         cell = puzzle_lookup[cell_id]
         glyph = _get_glyph(cell, no_hints)
         glyph_chunk = _get_glyph_chunk(line_number, big_rows, glyph)
-        puzzle_str += glyph_chunk
+        big_board_str += glyph_chunk
         last_cell_id = cell_id
-    print(puzzle_str)
+    return big_board_str
 
 
 def _iterate_board(board):

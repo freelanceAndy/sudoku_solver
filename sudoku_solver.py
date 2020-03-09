@@ -1,5 +1,5 @@
+import sys
 import math
-import atexit
 import argparse
 from enum import Enum
 from big_board import big_board
@@ -11,37 +11,32 @@ all_values = set([str(i) for i in range(1, 10)])
 
 class SudokuSolver:
 
-    def __init__(self):
-        parser = argparse.ArgumentParser()
+    def __init__(self, args=[]):
+        argv = args if args else [arg for arg in sys.argv if arg is not sys.argv[0]]
+        parser = argparse.ArgumentParser(argv)
         parser.add_argument('--puzzle-file-path', type=str, required=True)
         parser.add_argument('--display-unsolved-puzzle', action='store_true')
-        parser.add_argument('--silent', action='store_false')
-        params = parser.parse_args()
-        self.verbose = params.silent
-        self.import_puzzle(params.puzzle_file_path)
-        if params.display_unsolved_puzzle is False:
+        parser.add_argument('--silent', action='store_true')
+        parser.parse_args(argv, self)
+
+        self.import_puzzle()
+        if self.display_unsolved_puzzle is False:
             self.solve_puzzle()
 
     class PuzzleSolved(Exception):
         pass
 
     def solve_puzzle(self):
-
-        atexit.register(big_board.print_board, self.puzzle)
-        atexit.register(self.print_small_board)
-        atexit.register(self.validate_board)
-        atexit.register(self.print_progress)
-
         try:
             self.loops = 0
             self.progress_made = True
             while self.making_progress():
                 self.set_impossible_values()
                 self.set_values()
-            atexit.unregister(self.print_small_board)
-            atexit.unregister(self.print_progress)
         except self.PuzzleSolved:
-            atexit.unregister(big_board.print_board)
+            self.print_progress()
+        self.validate_board()
+        print(self)
 
     def making_progress(self):
         self.loops += 1
@@ -51,14 +46,14 @@ class SudokuSolver:
         return enter_loop
 
     def print_progress(self):
-        if self.verbose:
+        if not self.silent:
             print(f"Current Loop: {self.loops}  Remaining Cells: {self.unsolved_cell_count}")
 
-    def import_puzzle(self, puzzle_file_path):
-        file_str = open(puzzle_file_path, 'r').read().strip()
+    def import_puzzle(self):
+        file_str = open(self.puzzle_file_path, 'r').read().strip()
         self.puzzle = [self.SudokuCell(char, idx) for idx, char in enumerate(file_str)]
         self.unsolved_cell_count = len([cell for cell in self.puzzle if cell.value is None])
-        self.print_small_board()
+        print(self.small_board())
 
     class SudokuCell:
 
@@ -75,15 +70,19 @@ class SudokuSolver:
         def set_coordinates(self, idx) -> int:
             self.row = math.ceil((idx+1)/9)
             self.col = int(str(idx/9).split('.')[-1][0])+1
-            self.blk = {1: {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2, 7: 3, 8: 3, 9: 3},
-                        2: {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2, 7: 3, 8: 3, 9: 3},
-                        3: {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2, 7: 3, 8: 3, 9: 3},
-                        4: {1: 4, 2: 4, 3: 4, 4: 5, 5: 5, 6: 5, 7: 6, 8: 6, 9: 6},
-                        5: {1: 4, 2: 4, 3: 4, 4: 5, 5: 5, 6: 5, 7: 6, 8: 6, 9: 6},
-                        6: {1: 4, 2: 4, 3: 4, 4: 5, 5: 5, 6: 5, 7: 6, 8: 6, 9: 6},
-                        7: {1: 7, 2: 7, 3: 7, 4: 8, 5: 8, 6: 8, 7: 9, 8: 9, 9: 9},
-                        8: {1: 7, 2: 7, 3: 7, 4: 8, 5: 8, 6: 8, 7: 9, 8: 9, 9: 9},
-                        9: {1: 7, 2: 7, 3: 7, 4: 8, 5: 8, 6: 8, 7: 9, 8: 9, 9: 9}}[self.row][self.col]
+            blk_col_1 = {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2, 7: 3, 8: 3, 9: 3}
+            blk_col_2 = {1: 4, 2: 4, 3: 4, 4: 5, 5: 5, 6: 5, 7: 6, 8: 6, 9: 6}
+            blk_col_3 = {1: 7, 2: 7, 3: 7, 4: 8, 5: 8, 6: 8, 7: 9, 8: 9, 9: 9}
+            blk_lookup = {1: blk_col_1,
+                          2: blk_col_1,
+                          3: blk_col_1,
+                          4: blk_col_2,
+                          5: blk_col_2,
+                          6: blk_col_2,
+                          7: blk_col_3,
+                          8: blk_col_3,
+                          9: blk_col_3}
+            self.blk = blk_lookup[self.row][self.col]
             self.id = f"r{self.row}c{self.col}_b{self.blk}"
 
         def ent(self, entity_id):
@@ -145,9 +144,9 @@ class SudokuSolver:
         if impossible_value not in cell.impossible_values:
             cell.impossible_values.add(impossible_value)
             self.progress_made = True
-            if message and self.verbose:
+            if message and not self.silent:
                 print(f"\tIMPOSSIBLE: r{cell.row}c{cell.col}: {impossible_value} ({message})")
-            if func and self.verbose:
+            if func and not self.silent:
                 func()  # prints puzzle
 
     def shared_hidden_values(self, grp, other_cells):
@@ -251,7 +250,7 @@ class SudokuSolver:
 
     def assign_cell_value(self, cell, value, msg=None):
         cell.value = value
-        if self.verbose:
+        if not self.silent:
             print(msg)
         self.unsolved_cell_count -= 1
         self.progress_made = True
@@ -284,13 +283,19 @@ class SudokuSolver:
                 msg=f"\tSOLVED: {entity_type.name}:{cell.ent(entity_type)} r{c.row}c{c.col} = {c.value} (only_one_value_left)"
                 self.assign_cell_value(c, c.possible_values().pop(), msg)
 
-    def print_small_board(self):
+    def __str__(self):
+        if not self.puzzle_solved():
+            return big_board.render(self.puzzle)
+        else:
+            return self.small_board()
+
+    def small_board(self):
         # This is borrowed code from:
         """https://tio.run/##dY9dSsQwEMff9xQhsJA0g9Tt7nZd8Ca@pB/gQre2pcr2TTyBQgdBEEVF8eMInmYuUrOpKX1QmGQy//nNP0nR1KdnedB15XGmt1Gi2Q6a9U41yq5J5WQNEcSQQLrWqhSliLwAYgmJVKniJzmfFNUmr4UQlfA4YUt4TfhC@Ep4y6UdMfINmyaM2qtR4l6g9h3jAf3sA7WX1H4TfhI@cSl/5Udr@UH4RfhsZNXLd1Z@I3wnvDfyNL3QmdjkxXktpJQHVVpkOk4N6zPT7jrhA1sC810cATsENnflDNjKnXtsASy0mG@xmeX9vyJwfF@uRvsw3l8xwAPwn@fC8qF7z9KRoQPmI6vQ8uPf7WH5Aw"""
         def q(x, y): return x+y+x+y+x
         def r(a, b, c, d, e): return a+q(q(b*3, c), d)+e+"\n"
         print_input = tuple([0 if x is None else int(x) for x in [c.value for c in self.puzzle]])
-        print(((r(*"╔═╤╦╗")+q(q("║ %d │ %d │ %d "*3+"║\n", r(*"╟─┼╫╢")), r(*"╠═╪╬╣"))+r(*"╚═╧╩╝")) % print_input).replace(*"0 "))
+        return ((r(*"╔═╤╦╗")+q(q("║ %d │ %d │ %d "*3+"║\n", r(*"╟─┼╫╢")), r(*"╠═╪╬╣"))+r(*"╚═╧╩╝")) % print_input).replace(*"0 ").strip()
 
     def validate_board(self):
         self.valid_board = True
@@ -306,7 +311,7 @@ class SudokuSolver:
                         ex_c = ent_cells_with_value[0]
                         print(f" ! THIS SOLUTION IS INCORRECT ! {ex_c.id}={ex_c.value} {cell.id}={cell.value}")
                         self.valid_board = False
-        if self.valid_board and self.verbose:
+        if self.valid_board and not self.silent:
             print("Board Values Are Valid.")
 
 
