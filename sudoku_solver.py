@@ -4,6 +4,7 @@ import argparse
 from enum import Enum
 from big_board import big_board
 from itertools import chain, combinations
+from collections import defaultdict
 
 Entity = Enum('Entity', 'row col blk')
 all_values = set([str(i) for i in range(1, 10)])
@@ -12,7 +13,7 @@ all_values = set([str(i) for i in range(1, 10)])
 class SudokuSolver:
 
     def __init__(self, args=[]):
-        argv = args if args else [arg for arg in sys.argv if arg is not sys.argv[0]]
+        argv = args if args else sys.argv[1::]
         parser = argparse.ArgumentParser(argv)
         parser.add_argument('--puzzle-file-path', type=str, required=True)
         parser.add_argument('--display-unsolved-puzzle', action='store_true')
@@ -50,9 +51,24 @@ class SudokuSolver:
             print(f"Current Loop: {self.loops}  Remaining Cells: {self.unsolved_cell_count}")
 
     def import_puzzle(self):
+        self.puzzle = []
+        self.puzzle_by_id = {}
+        self.puzzle_by_row = defaultdict(list)
+        self.puzzle_by_col = defaultdict(list)
+        self.puzzle_by_blk = defaultdict(list)
+        self.puzzle_ent = {Entity.row: self.puzzle_by_row, Entity.col: self.puzzle_by_col, Entity.blk: self.puzzle_by_blk}
+        self.unsolved_cell_count = 0
+
         file_str = open(self.puzzle_file_path, 'r').read().strip()
-        self.puzzle = [self.SudokuCell(char, idx) for idx, char in enumerate(file_str)]
-        self.unsolved_cell_count = len([cell for cell in self.puzzle if cell.value is None])
+        for idx, char in enumerate(file_str):
+            cell = self.SudokuCell(char, idx)
+            self.puzzle.append(cell)
+            self.puzzle_by_id[f"{cell.row}{cell.col}"] = cell
+            self.puzzle_by_row[cell.row].append(cell)
+            self.puzzle_by_col[cell.col].append(cell)
+            self.puzzle_by_blk[cell.blk].append(cell)
+            if not cell.value:
+                self.unsolved_cell_count += 1
         print(self.small_board())
 
     class SudokuCell:
@@ -68,8 +84,8 @@ class SudokuSolver:
                 self.impossible_values = set()
 
         def set_coordinates(self, idx) -> int:
-            self.row = math.ceil((idx+1)/9)
-            self.col = int(str(idx/9).split('.')[-1][0])+1
+            self.row = math.ceil((idx + 1) / 9)
+            self.col = int(str(idx / 9).split('.')[-1][0]) + 1
             blk_col_1 = {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2, 7: 3, 8: 3, 9: 3}
             blk_col_2 = {1: 4, 2: 4, 3: 4, 4: 5, 5: 5, 6: 5, 7: 6, 8: 6, 9: 6}
             blk_col_3 = {1: 7, 2: 7, 3: 7, 4: 8, 5: 8, 6: 8, 7: 9, 8: 9, 9: 9}
@@ -117,6 +133,7 @@ class SudokuSolver:
             self.impossible_in_entity(cell, self.get_ent(cell.row, Entity.row), Entity.row)
             self.impossible_in_entity(cell, self.get_ent(cell.col, Entity.col), Entity.col)
             self.impossible_in_entity(cell, self.get_ent(cell.blk, Entity.blk), Entity.blk)
+            self.x_wing(cell)
 
         for entity_type in Entity:
             for ent_id in range(1, 10):
@@ -131,7 +148,7 @@ class SudokuSolver:
             self.check_subvectors_within_blk(blk)
 
     def get_ent(self, entity_id, entity_type, empty_only=False):
-        return [cell for cell in self.puzzle if (cell.ent(entity_type) == entity_id and ((empty_only and cell.value is None) or not empty_only))]
+        return [cell for cell in self.puzzle_ent[entity_type][entity_id] if ((empty_only and cell.value is None) or not empty_only)]
 
     def impossible_in_entity(self, cell, entity, entity_type):
         for other_cell in entity:
@@ -140,14 +157,53 @@ class SudokuSolver:
             else:
                 self.assign_cell_impossible_value(cell, other_cell.value, entity_type.name)
 
-    def assign_cell_impossible_value(self, cell, impossible_value, message=None, func=None):
+    def assign_cell_impossible_value(self, cell, impossible_value, message=None, print_board=False):
         if impossible_value not in cell.impossible_values:
             cell.impossible_values.add(impossible_value)
             self.progress_made = True
             if message and not self.silent:
-                print(f"\tIMPOSSIBLE: r{cell.row}c{cell.col}: {impossible_value} ({message})")
-            if func and not self.silent:
-                func()  # prints puzzle
+                print(f"\tIMPOSSIBLE: r{cell.row}c{cell.col} != {impossible_value} ({message})")
+            if print_board and not self.silent:
+                print(self)  # To help develop new logic to solve harder puzzles
+
+    def x_wing(self, cell):
+        if cell.value or 9 in (cell.row, cell.col):
+            return
+        for value_intersection, x_list, outer_empty_cells in self.x_sets(cell):
+            message = f"x_wing: {sorted([c.id for c in x_list])}"
+            for c in outer_empty_cells:
+                self.assign_cell_impossible_value(c, value_intersection, message)
+
+    def x_sets(self, top_left):
+        empty_cells_in_col = (c for c in self.get_ent(top_left.col, Entity.col, empty_only=True) if c.row > top_left.row)
+        empty_cells_in_row = [c for c in self.get_ent(top_left.row, Entity.row, empty_only=True) if c.col > top_left.col]
+        for bottom_left in empty_cells_in_col:
+            for top_right in empty_cells_in_row:
+                bottom_right = self.puzzle_by_id[f"{bottom_left.row}{top_right.col}"]
+                if bottom_right.value:
+                    continue
+                x_list = sorted([top_left, bottom_left, top_right, bottom_right], key=lambda x: len(x.possible_values()))
+                if len(x_list[0].possible_values()) is not 2:
+                    continue
+                if len(x_list[1].possible_values()) is not 2:
+                    continue
+                if x_list[0].row is not x_list[1].row and x_list[0].col is not x_list[1].col:
+                    continue
+                value_intersection = set.intersection(*[c.possible_values() for c in x_list])
+                if len(value_intersection) is not 1:
+                    continue
+                value_intersection = value_intersection.pop()
+                x_ids = [c.id for c in x_list]
+
+                rows_candidates = [c for c in self.get_ent(top_left.row, Entity.row, empty_only=True) if c.id not in x_ids and value_intersection in c.possible_values()]
+                [rows_candidates.append(c) for c in self.get_ent(bottom_left.row, Entity.row, empty_only=True) if c.id not in x_ids and value_intersection in c.possible_values()]
+                cols_candidates = [c for c in self.get_ent(top_left.col, Entity.col, empty_only=True) if c.id not in x_ids and value_intersection in c.possible_values()]
+                [cols_candidates.append(c) for c in self.get_ent(bottom_right.col, Entity.col, empty_only=True) if c.id not in x_ids and value_intersection in c.possible_values()]
+
+                if not cols_candidates and rows_candidates:
+                    yield (value_intersection, x_list, rows_candidates)
+                elif not rows_candidates and cols_candidates:
+                    yield (value_intersection, x_list, cols_candidates)
 
     def shared_hidden_values(self, grp, other_cells):
         # For strategy explanation, see https://www.learn-sudoku.com/hidden-pairs.html
@@ -163,7 +219,7 @@ class SudokuSolver:
                 last_grp_members = [c for c in grp if c not in combo]
                 for c in last_grp_members:
                     mbr_intersect = value_intersection.intersection(c.possible_values())
-                    if len(mbr_intersect) >= len(value_intersection)-1:
+                    if len(mbr_intersect) >= len(value_intersection) - 1:
                         shared_hidden_group.append(c)
                 for cell in shared_hidden_group:
                     for value in outside_values:
@@ -175,7 +231,7 @@ class SudokuSolver:
         value_union = set.union(*[cell.possible_values() for cell in grp])
         for c in other_cells:
             if c.possible_values().issubset(value_union):
-                return  # catch you on the flipside, grp.
+                return  # a future set will include this other_cell as a grp member
         if len(value_union) == len(grp):
             for cell in other_cells:
                 for value in value_union:
@@ -183,7 +239,6 @@ class SudokuSolver:
 
     def get_powerset(self, empty_cells):
         for grp in self.powerset(empty_cells):
-            # if len(grp) in (0,1) or len(grp) > 4 or len(grp) == len(empty_cells):
             if len(grp) not in (2, 3, 4):
                 continue
             other_cells = [c for c in empty_cells if c not in grp]
@@ -191,7 +246,7 @@ class SudokuSolver:
 
     def powerset(self, iterable):
         s = list(iterable)
-        return chain.from_iterable(combinations(s, r) for r in range(len(s)+1))
+        return chain.from_iterable(combinations(s, r) for r in range(len(s) + 1))
 
     def check_vector_beyond_blk(self, blk):
         all_blk_cells = self.get_ent(blk, Entity.blk)
@@ -270,7 +325,7 @@ class SudokuSolver:
             if len(cells_possibly_containing_missing_values) != 1:
                 continue
             c = next(iter(cells_possibly_containing_missing_values))
-            msg=f"\tSOLVED: {entity_type.name}:{cell.ent(entity_type)} r{c.row}c{c.col} = {c.value} (only_one_cell_left)"
+            msg = f"\tSOLVED: r{c.row}c{c.col} = {missing_value} (only_one_cell_left in {entity_type.name}:{cell.ent(entity_type)})"
             self.assign_cell_value(c, missing_value, msg)
 
     def solve_for_cells_with_only_one_value_left(self, cell, entity_type):
@@ -280,8 +335,9 @@ class SudokuSolver:
         missing_values = all_values - entity_values
         for c in unsolved_cells:
             if len(c.possible_values()) == 1:
-                msg=f"\tSOLVED: {entity_type.name}:{cell.ent(entity_type)} r{c.row}c{c.col} = {c.value} (only_one_value_left)"
-                self.assign_cell_value(c, c.possible_values().pop(), msg)
+                remaining_value = c.possible_values().pop()
+                msg = f"\tSOLVED: r{c.row}c{c.col} = {remaining_value} (only_one_value_left {entity_type.name}:{cell.ent(entity_type)})"
+                self.assign_cell_value(c, remaining_value, msg)
 
     def __str__(self):
         if not self.puzzle_solved():
@@ -292,10 +348,10 @@ class SudokuSolver:
     def small_board(self):
         # This is borrowed code from:
         """https://tio.run/##dY9dSsQwEMff9xQhsJA0g9Tt7nZd8Ca@pB/gQre2pcr2TTyBQgdBEEVF8eMInmYuUrOpKX1QmGQy//nNP0nR1KdnedB15XGmt1Gi2Q6a9U41yq5J5WQNEcSQQLrWqhSliLwAYgmJVKniJzmfFNUmr4UQlfA4YUt4TfhC@Ep4y6UdMfINmyaM2qtR4l6g9h3jAf3sA7WX1H4TfhI@cSl/5Udr@UH4RfhsZNXLd1Z@I3wnvDfyNL3QmdjkxXktpJQHVVpkOk4N6zPT7jrhA1sC810cATsENnflDNjKnXtsASy0mG@xmeX9vyJwfF@uRvsw3l8xwAPwn@fC8qF7z9KRoQPmI6vQ8uPf7WH5Aw"""
-        def q(x, y): return x+y+x+y+x
-        def r(a, b, c, d, e): return a+q(q(b*3, c), d)+e+"\n"
+        def q(x, y): return x + y + x + y + x
+        def r(a, b, c, d, e): return a + q(q(b * 3, c), d) + e + "\n"
         print_input = tuple([0 if x is None else int(x) for x in [c.value for c in self.puzzle]])
-        return ((r(*"╔═╤╦╗")+q(q("║ %d │ %d │ %d "*3+"║\n", r(*"╟─┼╫╢")), r(*"╠═╪╬╣"))+r(*"╚═╧╩╝")) % print_input).replace(*"0 ").strip()
+        return ((r(*"╔═╤╦╗") + q(q("║ %d │ %d │ %d " * 3 + "║\n", r(*"╟─┼╫╢")), r(*"╠═╪╬╣")) + r(*"╚═╧╩╝")) % print_input).replace(*"0 ").strip()
 
     def validate_board(self):
         self.valid_board = True
