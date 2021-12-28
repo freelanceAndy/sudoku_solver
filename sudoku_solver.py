@@ -183,14 +183,14 @@ class SudokuSolver:
                 if bottom_right.value:
                     continue
                 x_list = sorted([top_left, bottom_left, top_right, bottom_right], key=lambda x: len(x.possible_values()))
-                if len(x_list[0].possible_values()) is not 2:
+                if len(x_list[0].possible_values()) != 2:
                     continue
-                if len(x_list[1].possible_values()) is not 2:
+                if len(x_list[1].possible_values()) != 2:
                     continue
                 if x_list[0].row is not x_list[1].row and x_list[0].col is not x_list[1].col:
                     continue
                 value_intersection = set.intersection(*[c.possible_values() for c in x_list])
-                if len(value_intersection) is not 1:
+                if len(value_intersection) != 1:
                     continue
                 value_intersection = value_intersection.pop()
                 x_ids = [c.id for c in x_list]
