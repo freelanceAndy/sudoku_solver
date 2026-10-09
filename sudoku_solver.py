@@ -1,15 +1,13 @@
 import sys
 import math
 import argparse
+import inspect
 from enum import Enum
 from big_board import big_board
+from functools import wraps
 from itertools import chain, combinations
 from collections import defaultdict
-
-
-import inspect
 from collections.abc import Callable
-from functools import wraps
 from typing import Any
 
 
@@ -27,7 +25,7 @@ def solver(func: Callable[..., Any]) -> Callable[..., Any]:
     return wrapper
 
 
-Entity = Enum("Entity", "row col blk")
+House = Enum("House", "row col blk")
 ALL_VALUES = set([str(i) for i in range(1, 10)])
 
 
@@ -82,7 +80,7 @@ class SudokuSolver:
         self.validate_board()
         print(self)
         print(self.get_puzzle_string())
-        print(self.file_str)
+        print(self.puzzle_file_str)
 
     def making_progress(self):
         self.loops += 1
@@ -94,33 +92,34 @@ class SudokuSolver:
     def print_progress(self):
         if not self.silent:
             print(
-                f"Current Loop: {self.loops}  Remaining Cells: {self.unsolved_cell_count}"
+                f"Current Loop: {self.loops}  Remaining Cells: {len(self.puzzle_unsolved_cell_by_id)}"
             )
 
     def import_puzzle(self):
-        self.puzzle = []
-        self.puzzle_by_id = {}
-        self.puzzle_by_row = defaultdict(list)
-        self.puzzle_by_col = defaultdict(list)
-        self.puzzle_by_blk = defaultdict(list)
-        self.puzzle_ent = {
-            Entity.row: self.puzzle_by_row,
-            Entity.col: self.puzzle_by_col,
-            Entity.blk: self.puzzle_by_blk,
+        self.puzzle_all_cells = []
+        self.puzzle_by_cell_id = {}
+        self.puzzle_unsolved_cell_by_id = {}
+        self.puzzle_by_row_id = defaultdict(list)
+        self.puzzle_by_col_id = defaultdict(list)
+        self.puzzle_by_block_id = defaultdict(list)
+        self.puzzle_house_indexes = {
+            House.row: self.puzzle_by_row_id,
+            House.col: self.puzzle_by_col_id,
+            House.blk: self.puzzle_by_block_id,
         }
-        self.unsolved_cell_count = 0
 
-        file_str = open(self.puzzle_file_path, "r").read().strip()
-        self.file_str = file_str
-        for idx, char in enumerate(file_str):
+        with open(self.puzzle_file_path, "r") as f:
+            self.puzzle_file_str = f.read().strip()
+
+        for idx, char in enumerate(self.puzzle_file_str):
             cell = self.SudokuCell(char, idx)
-            self.puzzle.append(cell)
-            self.puzzle_by_id[f"{cell.row}{cell.col}"] = cell
-            self.puzzle_by_row[cell.row].append(cell)
-            self.puzzle_by_col[cell.col].append(cell)
-            self.puzzle_by_blk[cell.blk].append(cell)
+            self.puzzle_all_cells.append(cell)
+            self.puzzle_by_cell_id[f"{cell.row}{cell.col}"] = cell
+            self.puzzle_by_row_id[cell.row].append(cell)
+            self.puzzle_by_col_id[cell.col].append(cell)
+            self.puzzle_by_block_id[cell.blk].append(cell)
             if not cell.value:
-                self.unsolved_cell_count += 1
+                self.puzzle_unsolved_cell_by_id[cell.id] = cell
         print(self.small_board())
 
     class SudokuCell:
@@ -133,10 +132,21 @@ class SudokuSolver:
                 self.is_given = True
             self._value = value
             self.set_coordinates(idx)
-            if self._value:
-                self.impossible_values = ALL_VALUES - set([self._value])
+            # if self._value:
+            #     self.impossible_values = ALL_VALUES - set([self._value])
+            # else:
+            #     self.impossible_values = set()
+            self.impossible_values = (
+                ALL_VALUES - {self._value} if self._value else set()
+            )
+
+        def remove_candidate(self, candidate_value):
+            if candidate_value not in self.impossible_values:
+                self.impossible_values.add(candidate_value)
+                progress_made = True
             else:
-                self.impossible_values = set()
+                progress_made = False
+            return progress_made
 
         def set_coordinates(self, idx):
             self.row = math.ceil((idx + 1) / 9)
@@ -158,12 +168,12 @@ class SudokuSolver:
             self.blk = blk_lookup[self.row][self.col]
             self.id = f"r{self.row}c{self.col}_b{self.blk}"
 
-        def ent(self, entity_id):
-            if entity_id is Entity.row:
+        def get_house_id(self, house_type: House):
+            if house_type is House.row:
                 return self.row
-            elif entity_id is Entity.col:
+            elif house_type is House.col:
                 return self.col
-            elif entity_id is Entity.blk:
+            elif house_type is House.blk:
                 return self.blk
 
         @property
@@ -186,58 +196,62 @@ class SudokuSolver:
                 return ALL_VALUES - self.impossible_values
 
     def set_impossible_values(self):
-        for cell in self.puzzle:
-            if cell.value:
-                continue
-            self.already_in_entity(
-                cell, self.get_house(cell.row, Entity.row), Entity.row
-            )
-            self.already_in_entity(
-                cell, self.get_house(cell.col, Entity.col), Entity.col
-            )
-            self.already_in_entity(
-                cell, self.get_house(cell.blk, Entity.blk), Entity.blk
-            )
+        for cell in self.puzzle_unsolved_cell_by_id.values():
+            self.already_in_house(cell, self.get_house(cell.row, House.row), House.row)
+            self.already_in_house(cell, self.get_house(cell.col, House.col), House.col)
+            self.already_in_house(cell, self.get_house(cell.blk, House.blk), House.blk)
             self.x_wing(cell)
 
-        for entity_type in Entity:
-            for ent_id in range(1, 10):
-                entity = self.get_house(ent_id, entity_type)
-                empty_cells = [c for c in entity if c.value is None]
-                for grp, other_cells in self.get_powerset(empty_cells):
-                    self.shared_hidden_values(grp, other_cells)
-                    self.shared_naked_values(grp, other_cells)
+        for house_type in House:
+            for id in range(1, 10):
+                house = self.get_house(id, house_type)
+                empty_cells = [c for c in house if c.value is None]
+                for group, other_cells in self.get_powerset(empty_cells):
+                    self.shared_hidden_values(group, other_cells)
+                    self.shared_naked_values(group, other_cells)
 
-        for blk in set([cell.blk for cell in self.puzzle]):
+        for blk in set([cell.blk for cell in self.puzzle_all_cells]):
             self.check_vector_beyond_block(blk)
             self.check_subvectors_within_blk(blk)
 
-    def get_house(self, entity_id, entity_type, empty_only=False) -> list[SudokuCell]:
+    def get_house(self, house_id: int, house_type: House) -> list[SudokuCell]:
+        return self.puzzle_house_indexes[house_type][house_id]
+
+    def get_house_empty_cells(
+        self, house_id: int, house_type: House
+    ) -> list[SudokuCell]:
         return [
             cell
-            for cell in self.puzzle_ent[entity_type][entity_id]
-            if ((empty_only and cell.value is None) or not empty_only)
+            for cell in self.puzzle_house_indexes[house_type][house_id]
+            if cell.value is None
         ]
 
     @solver
-    def already_in_entity(self, cell, entity, entity_type):
-        for other_cell in entity:
+    def already_in_house(self, cell: SudokuCell, house, house_type: House):
+        for other_cell in house:
             if other_cell.value is None:
                 continue
             else:
-                self.assign_cell_impossible_value(
-                    cell, other_cell.value, f"already in {entity_type.name}"
+                self.eliminate_candidate(
+                    cell=cell,
+                    candidate_value=other_cell.value,
+                    message=f"already in {house_type.name}",
+                    explicit_silent=True,
                 )
 
-    def assign_cell_impossible_value(
-        self, cell, impossible_value, message=None, print_board=False
+    def eliminate_candidate(
+        self,
+        cell: SudokuCell,
+        candidate_value,
+        message=None,
+        print_board=False,
+        explicit_silent=False,
     ):
-        if impossible_value not in cell.impossible_values:
-            cell.impossible_values.add(impossible_value)
-            self.progress_made = True
-            if message and not self.silent:
+        if progress_made := cell.remove_candidate(candidate_value):
+            self.progress_made = progress_made
+            if message and not (self.silent or explicit_silent):
                 print(
-                    f"\tIMPOSSIBLE: r{cell.row}c{cell.col} != {impossible_value} ({message})"
+                    f"Eliminated candidate: {candidate_value} from r{cell.row}c{cell.col} ({message})"
                 )
             if print_board and not self.silent:
                 print(self)  # To help develop new logic to solve harder puzzles
@@ -249,22 +263,24 @@ class SudokuSolver:
         for value_intersection, x_list, outer_empty_cells in self.x_sets(cell):
             message = f"x_wing: {sorted([c.id for c in x_list])}"
             for c in outer_empty_cells:
-                self.assign_cell_impossible_value(c, value_intersection, message)
+                self.eliminate_candidate(c, value_intersection, message)
 
     def x_sets(self, top_left):
         empty_cells_in_col = (
             c
-            for c in self.get_house(top_left.col, Entity.col, empty_only=True)
+            for c in self.get_house_empty_cells(top_left.col, House.col)
             if c.row > top_left.row
         )
         empty_cells_in_row = [
             c
-            for c in self.get_house(top_left.row, Entity.row, empty_only=True)
+            for c in self.get_house_empty_cells(top_left.row, House.row)
             if c.col > top_left.col
         ]
         for bottom_left in empty_cells_in_col:
             for top_right in empty_cells_in_row:
-                bottom_right = self.puzzle_by_id[f"{bottom_left.row}{top_right.col}"]
+                bottom_right = self.puzzle_by_cell_id[
+                    f"{bottom_left.row}{top_right.col}"
+                ]
                 if bottom_right.value:
                     continue
                 x_list = sorted(
@@ -290,26 +306,22 @@ class SudokuSolver:
 
                 rows_candidates = [
                     c
-                    for c in self.get_house(top_left.row, Entity.row, empty_only=True)
+                    for c in self.get_house_empty_cells(top_left.row, House.row)
                     if c.id not in x_ids and value_intersection in c.possible_values()
                 ]
                 [
                     rows_candidates.append(c)
-                    for c in self.get_house(
-                        bottom_left.row, Entity.row, empty_only=True
-                    )
+                    for c in self.get_house_empty_cells(bottom_left.row, House.row)
                     if c.id not in x_ids and value_intersection in c.possible_values()
                 ]
                 cols_candidates = [
                     c
-                    for c in self.get_house(top_left.col, Entity.col, empty_only=True)
+                    for c in self.get_house_empty_cells(top_left.col, House.col)
                     if c.id not in x_ids and value_intersection in c.possible_values()
                 ]
                 [
                     cols_candidates.append(c)
-                    for c in self.get_house(
-                        bottom_right.col, Entity.col, empty_only=True
-                    )
+                    for c in self.get_house_empty_cells(bottom_right.col, House.col)
                     if c.id not in x_ids and value_intersection in c.possible_values()
                 ]
 
@@ -341,7 +353,7 @@ class SudokuSolver:
                         shared_hidden_group.append(c)
                 for cell in shared_hidden_group:
                     for value in outside_values:
-                        self.assign_cell_impossible_value(
+                        self.eliminate_candidate(
                             cell, value, f"hidden {grp_size[len(shared_hidden_group)]}"
                         )
 
@@ -356,16 +368,14 @@ class SudokuSolver:
         if len(value_union) == len(grp):
             for cell in other_cells:
                 for value in value_union:
-                    self.assign_cell_impossible_value(
-                        cell, value, f"naked {grp_size[len(grp)]}"
-                    )
+                    self.eliminate_candidate(cell, value, f"naked {grp_size[len(grp)]}")
 
     def get_powerset(self, empty_cells):
-        for grp in self.powerset(empty_cells):
-            if len(grp) not in (2, 3, 4):
+        for group in self.powerset(empty_cells):
+            if len(group) not in (2, 3, 4):
                 continue
-            other_cells = [c for c in empty_cells if c not in grp]
-            yield (grp, other_cells)
+            other_cells = [c for c in empty_cells if c not in group]
+            yield (group, other_cells)
 
     def powerset(self, iterable):
         s = list(iterable)
@@ -373,17 +383,17 @@ class SudokuSolver:
 
     @solver
     def check_vector_beyond_block(self, blk):
-        all_blk_cells = self.get_house(blk, Entity.blk)
+        all_blk_cells = self.get_house(blk, House.blk)
         blk_cells_without_values = [c for c in all_blk_cells if c.value is None]
         if len(blk_cells_without_values) == 0:
             return
-        for entity_type in [Entity.row, Entity.col]:
+        for entity_type in [House.row, House.col]:
             e_range = set(
-                [c.ent(entity_type) for c in all_blk_cells if c.value is None]
+                [c.get_house_id(entity_type) for c in all_blk_cells if c.value is None]
             )
             empty_vectors_possibilities = {v: set([]) for v in e_range}
             for c in blk_cells_without_values:
-                empty_vectors_possibilities[c.ent(entity_type)].update(
+                empty_vectors_possibilities[c.get_house_id(entity_type)].update(
                     c.possible_values()
                 )
             for vector, possibilities in empty_vectors_possibilities.items():
@@ -394,32 +404,31 @@ class SudokuSolver:
                 difference = possibilities - other_possibilities
                 cells_in_vector_beyond_blk = [
                     c
-                    for c in self.get_house(vector, entity_type, empty_only=True)
+                    for c in self.get_house_empty_cells(vector, entity_type)
                     if c.blk != blk
                 ]
                 for value in difference:
                     for c in cells_in_vector_beyond_blk:
-                        self.assign_cell_impossible_value(
+                        self.eliminate_candidate(
                             c, value, message="vector beyond block"
                         )
 
     @solver
     def check_subvectors_within_blk(self, blk):
-        all_blk_cells = self.get_house(blk, Entity.blk)
-        solved_blk_values = set([c.value for c in all_blk_cells if c.value])
+        all_blk_cells = self.get_house(blk, House.blk)
         blk_cells_without_values = [c for c in all_blk_cells if c.value is None]
         if len(blk_cells_without_values) == 0:
             return
-        for entity_type in [Entity.row, Entity.col]:
+        for entity_type in [House.row, House.col]:
             e_range = set(
-                [c.ent(entity_type) for c in all_blk_cells if c.value is None]
+                [c.get_house_id(entity_type) for c in all_blk_cells if c.value is None]
             )
             empty_vectors_possibilities = {v: [set(), []] for v in e_range}
             for c in blk_cells_without_values:
-                empty_vectors_possibilities[c.ent(entity_type)][0].update(
+                empty_vectors_possibilities[c.get_house_id(entity_type)][0].update(
                     c.possible_values()
                 )
-                empty_vectors_possibilities[c.ent(entity_type)][1].append(c)
+                empty_vectors_possibilities[c.get_house_id(entity_type)][1].append(c)
             for vector, possibilities in empty_vectors_possibilities.items():
                 other_possibilities = set()
                 for other_vect, other_pos in empty_vectors_possibilities.items():
@@ -433,32 +442,32 @@ class SudokuSolver:
                 if number_possiblities_equals_number_cells:
                     for impossible_value in impossible_in_vector:
                         for c in possibilities[1]:
-                            self.assign_cell_impossible_value(
-                                c, impossible_value, message="vectors_within_blk"
+                            self.eliminate_candidate(
+                                c, impossible_value, message="vectors within block"
                             )
 
     def set_values(self):
-        for cell in self.puzzle:
+        for cell in self.puzzle_all_cells:
             if cell.value:
                 continue
-            for entity_type in Entity:
-                self.solve_for_values_with_only_one_cell_left(cell, entity_type)
-                self.solve_for_cells_with_only_one_value_left(cell, entity_type)
+            for house_type in House:
+                self.solve_for_values_with_only_one_cell_left(cell, house_type)
+                self.solve_for_cells_with_only_one_value_left(cell, house_type)
 
     def assign_cell_value(self, cell, value, msg=None):
         cell.value = value
         if not self.silent:
             print(msg)
-        self.unsolved_cell_count -= 1
+        del self.puzzle_unsolved_cell_by_id[cell.id]
         self.progress_made = True
         if self.puzzle_solved():
             raise self.PuzzleSolved
 
     def puzzle_solved(self):
-        return self.unsolved_cell_count == 0
+        return len(self.puzzle_unsolved_cell_by_id) == 0
 
-    def solve_for_values_with_only_one_cell_left(self, cell, entity_type):
-        entity_cells = self.get_house(cell.ent(entity_type), entity_type)
+    def solve_for_values_with_only_one_cell_left(self, cell, house_type: House):
+        entity_cells = self.get_house(cell.get_house_id(house_type), house_type)
         unsolved_cells = [c for c in entity_cells if c.value is None]
         entity_values = set([c.value for c in entity_cells if c.value])
         missing_values = ALL_VALUES - entity_values
@@ -468,27 +477,25 @@ class SudokuSolver:
             ]
             if len(cells_possibly_containing_missing_values) != 1:
                 continue
-            c = next(iter(cells_possibly_containing_missing_values))
-            msg = f"\tSOLVED: r{c.row}c{c.col} = {missing_value} (only one cell left in {entity_type.name}:{cell.ent(entity_type)})"
+            c = cells_possibly_containing_missing_values[0]
+            msg = f"\tSOLVED: r{c.row}c{c.col} = {missing_value} (last cell left in {house_type.name}:{cell.get_house_id(house_type)})"
             self.assign_cell_value(c, missing_value, msg)
 
-    def solve_for_cells_with_only_one_value_left(self, cell, entity_type):
-        entity_cells = self.get_house(cell.ent(entity_type), entity_type)
-        entity_values = set([c.value for c in entity_cells if c.value])
-        unsolved_cells = [c for c in entity_cells if c.value is None]
-        missing_values = ALL_VALUES - entity_values
+    def solve_for_cells_with_only_one_value_left(self, cell, house_type: House):
+        house_cells = self.get_house(cell.get_house_id(house_type), house_type)
+        unsolved_cells = [c for c in house_cells if c.value is None]
         for c in unsolved_cells:
-            if len(c.possible_values()) == 1:
-                remaining_value = c.possible_values().pop()
-                msg = f"\tSOLVED: r{c.row}c{c.col} = {remaining_value} (only_one_value_left {entity_type.name}:{cell.ent(entity_type)})"
+            if len(possible_values := c.possible_values()) == 1:
+                remaining_value = possible_values.pop()
+                msg = f"\tSOLVED: r{c.row}c{c.col} = {remaining_value} (last value left {house_type.name}:{cell.get_house_id(house_type)})"
                 self.assign_cell_value(c, remaining_value, msg)
 
     def get_puzzle_string(self) -> str:
-        return "".join(obj.value or "_" for obj in self.puzzle)
+        return "".join(obj.value or "_" for obj in self.puzzle_all_cells)
 
     def __str__(self):
         if not self.puzzle_solved():
-            return big_board.render(self.puzzle)
+            return big_board.render(self.puzzle_all_cells)
         else:
             return self.small_board()
 
@@ -503,7 +510,10 @@ class SudokuSolver:
             return a + q(q(b * 3, c), d) + e + "\n"
 
         print_input = tuple(
-            [0 if x is None else int(x) for x in [c.value for c in self.puzzle]]
+            [
+                0 if x is None else int(x)
+                for x in [c.value for c in self.puzzle_all_cells]
+            ]
         )
         return (
             (
@@ -520,11 +530,9 @@ class SudokuSolver:
 
     def validate_board(self):
         self.valid_board = True
-        for entity_type in Entity:
-            ent_ids = set([c.ent(entity_type) for c in self.puzzle])
-            all_of_ent_type = [
-                self.get_house(ent_id, entity_type) for ent_id in ent_ids
-            ]
+        for house_type in House:
+            ent_ids = set([c.get_house_id(house_type) for c in self.puzzle_all_cells])
+            all_of_ent_type = [self.get_house(ent_id, house_type) for ent_id in ent_ids]
             for ent in all_of_ent_type:
                 for cell in ent:
                     if cell.value is None:
