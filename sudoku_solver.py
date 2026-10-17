@@ -84,18 +84,15 @@ class House:
 class SudokuCell:
 
     def __init__(self, value, idx):
-        if value == "_":
-            value = None
-            self.is_given = False
-        else:
-            self.is_given = True
-        self._value = value  # bypasses the value.setter function on purpose here
+        self.is_given = value != "_"
+        self._value = value if self.is_given else None
+        self.impossible_values = ALL_VALUES - {self._value} if self._value else set()
+
         self.set_coordinates(idx)
         self.row = House(house_type=HouseType.row, house_id=self.row_id, cell=self)
         self.column = House(house_type=HouseType.col, house_id=self.col_id, cell=self)
         self.block = House(house_type=HouseType.blk, house_id=self.block_id, cell=self)
-        self.impossible_values = ALL_VALUES - {self._value} if self._value else set()
-        if self._value:
+        if self.is_given:
             self.mark_solved_in_houses()
 
     def set_coordinates(self, idx):
@@ -130,18 +127,15 @@ class SudokuCell:
     def value(self):
         return self._value
 
-    @value.setter
-    def value(self, submitted_value: str):
-        """
-        This setter function is not used when initializing the cell object.
-        It is only called externally by a solver.
-        """
-        if (submitted_value in self.impossible_values) or (
-            submitted_value not in ALL_VALUES
-        ):
-            raise ValueError(f"value: {submitted_value} is not possible for {self}")
-        self._value = submitted_value
-        self.impossible_values = ALL_VALUES - set([self._value])
+    def solve(self, value: str):
+        if self._value is not None:
+            raise ValueError(f"{self} is already solved")
+
+        if value not in ALL_VALUES or value in self.impossible_values:
+            raise ValueError(f"value: {value} is not possible for {self}")
+
+        self._value = value
+        self.impossible_values = ALL_VALUES - {value}
         self.mark_solved_in_houses()
 
     def mark_solved_in_houses(self):
@@ -548,7 +542,7 @@ class SudokuSolver:
             return
 
         try:
-            cell.value = value
+            cell.solve(value)
         except ValueError:
             print(self)
             raise
