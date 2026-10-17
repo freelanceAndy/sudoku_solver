@@ -58,13 +58,10 @@ class House:
             self._initialized = True
             self.house_type = house_type
             self.house_id = house_id
-            self.all_cells = set()
             self.solved_cells = set()
             self.unsolved_cells = set()
             self.unsolved_values = ALL_VALUES.copy()
-            self.solved_values = set()
 
-        self.all_cells.add(cell)
         self.update_manifest(cell)
 
     @property
@@ -80,7 +77,6 @@ class House:
             self.unsolved_cells.discard(cell)
             self.solved_cells.add(cell)
             self.unsolved_values.discard(cell.value)
-            self.solved_values.add(cell.value)
         else:
             self.unsolved_cells.add(cell)
 
