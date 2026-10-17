@@ -237,6 +237,7 @@ class SudokuSolver:
     def import_puzzle(self):
         self.puzzle_all_cells: list[SudokuCell] = []
         self.puzzle_by_cell_id: dict[str, SudokuCell] = {}
+        self.puzzle_by_cell_row_col: dict[str, SudokuCell] = {}
         self.puzzle_unsolved_cell_by_id: dict[str, SudokuCell] = {}
         self.puzzle_by_row_id = defaultdict(list)
         self.puzzle_by_col_id = defaultdict(list)
@@ -253,7 +254,8 @@ class SudokuSolver:
         for idx, char in enumerate(self.puzzle_file_str):
             cell = SudokuCell(char, idx)
             self.puzzle_all_cells.append(cell)
-            self.puzzle_by_cell_id[f"{cell.row_id}{cell.col_id}"] = cell
+            self.puzzle_by_cell_id[cell.id_] = cell
+            self.puzzle_by_cell_row_col[f"{cell.row_id}{cell.col_id}"] = cell
             self.puzzle_by_row_id[cell.row_id].append(cell)
             self.puzzle_by_col_id[cell.col_id].append(cell)
             self.puzzle_by_block_id[cell.block_id].append(cell)
@@ -293,7 +295,7 @@ class SudokuSolver:
     def get_house(self, house_id: int, house_type: HouseType) -> list[SudokuCell]:
         return self.puzzle_house_indexes[house_type][house_id]
 
-    def get_house_empty_cells(
+    def get_house_unsolved_cells(
         self, house_id: int, house_type: HouseType
     ) -> list[SudokuCell]:
         return [
@@ -352,17 +354,17 @@ class SudokuSolver:
     def x_sets(self, top_left):
         empty_cells_in_col = (
             c
-            for c in self.get_house_empty_cells(top_left.col, HouseType.col)
+            for c in self.get_house_unsolved_cells(top_left.col, HouseType.col)
             if c.row_id > top_left.row
         )
         empty_cells_in_row = [
             c
-            for c in self.get_house_empty_cells(top_left.row, HouseType.row)
+            for c in self.get_house_unsolved_cells(top_left.row, HouseType.row)
             if c.col_id > top_left.col
         ]
         for bottom_left in empty_cells_in_col:
             for top_right in empty_cells_in_row:
-                bottom_right = self.puzzle_by_cell_id[
+                bottom_right = self.puzzle_by_cell_row_col[
                     f"{bottom_left.row_id}{top_right.col_id}"
                 ]
                 if bottom_right.value:
@@ -390,24 +392,24 @@ class SudokuSolver:
 
                 rows_candidates = [
                     c
-                    for c in self.get_house_empty_cells(top_left.row, HouseType.row)
+                    for c in self.get_house_unsolved_cells(top_left.row, HouseType.row)
                     if c.id_ not in x_ids and value_intersection in c.possible_values
                 ]
                 [
                     rows_candidates.append(c)
-                    for c in self.get_house_empty_cells(
+                    for c in self.get_house_unsolved_cells(
                         bottom_left.row_id, HouseType.row
                     )
                     if c.id_ not in x_ids and value_intersection in c.possible_values
                 ]
                 cols_candidates = [
                     c
-                    for c in self.get_house_empty_cells(top_left.col, HouseType.col)
+                    for c in self.get_house_unsolved_cells(top_left.col, HouseType.col)
                     if c.id_ not in x_ids and value_intersection in c.possible_values
                 ]
                 [
                     cols_candidates.append(c)
-                    for c in self.get_house_empty_cells(
+                    for c in self.get_house_unsolved_cells(
                         bottom_right.col_id, HouseType.col
                     )
                     if c.id_ not in x_ids and value_intersection in c.possible_values
@@ -490,7 +492,7 @@ class SudokuSolver:
                 difference = possibilities - other_possibilities
                 cells_in_vector_beyond_blk = [
                     c
-                    for c in self.get_house_empty_cells(vector, house_type)
+                    for c in self.get_house_unsolved_cells(vector, house_type)
                     if c.block_id != blk
                 ]
                 for value in difference:
@@ -502,19 +504,19 @@ class SudokuSolver:
     @solver
     def check_subvectors_within_blk(self, blk):
         all_blk_cells = self.get_house(blk, HouseType.blk)
-        blk_cells_without_values = [c for c in all_blk_cells if c.value is None]
-        if len(blk_cells_without_values) == 0:
-            return
         for house_type in [HouseType.row, HouseType.col]:
-            e_range = set(
-                [c.get_house_id(house_type) for c in all_blk_cells if c.value is None]
-            )
+            if not (unsolved_block_cells := all_blk_cells[0].block.unsolved_cells):
+                return
+
+            e_range = set([c.get_house_id(house_type) for c in unsolved_block_cells])
             empty_vectors_possibilities = {v: [set(), []] for v in e_range}
-            for c in blk_cells_without_values:
+
+            for c in unsolved_block_cells:
                 empty_vectors_possibilities[c.get_house_id(house_type)][0].update(
                     c.possible_values
                 )
                 empty_vectors_possibilities[c.get_house_id(house_type)][1].append(c)
+
             for vector, possibilities in empty_vectors_possibilities.items():
                 other_possibilities = set()
                 for other_vect, other_pos in empty_vectors_possibilities.items():
@@ -559,19 +561,20 @@ class SudokuSolver:
         if self.puzzle_solved():
             raise self.PuzzleSolved
 
-        self.eliminate_candidate_from_sees(cell)
+        self.eliminate_candidate_from_see_cells(cell)
         self.propogate_hidden_singles(cell)
 
-    def eliminate_candidate_from_sees(self, cell: SudokuCell):
+    def eliminate_candidate_from_see_cells(self, cell: SudokuCell):
         """
-        How do we do already_in_house eliminations in a propogating sort of way?
-        At cell value assignment, do we iterate over each house cell and add the impossible
-        value? I think
+        See Cell
+        If two cells share a house, they “see” each other and their values
+        which they can eliminate as a candidate immediately whenever a
+        cell is solved.
         """
         for see_cell in chain(
-            self.get_house_empty_cells(cell.row_id, HouseType.row),
-            self.get_house_empty_cells(cell.col_id, HouseType.col),
-            self.get_house_empty_cells(cell.block_id, HouseType.blk),
+            list(cell.row.unsolved_cells),
+            list(cell.column.unsolved_cells),
+            list(cell.block.unsolved_cells),
         ):
             self.eliminate_candidate(
                 cell=see_cell,
