@@ -258,11 +258,7 @@ class SudokuSolver:
         print(self.small_board())
 
     def set_impossible_values(self):
-        for cell in self.puzzle_all_cells:
-            if cell.value is None:
-                continue
-
-            self.sees(cell)
+        self.sees()
 
         for cell in list(self.puzzle_unsolved_cell_by_id.values()):
             if cell.value:
@@ -294,12 +290,15 @@ class SudokuSolver:
         ]
 
     @solver
-    def sees(self, cell: SudokuCell):
+    def sees(self):
         """
         For a given solved cell, eliminate that candidate value for all unsolved
         cells in each house.
         """
-        self.eliminate_candidate_from_see_cells(cell)
+        for cell in self.puzzle_all_cells:
+            if cell.value is None:
+                continue
+            self.eliminate_candidate_from_see_cells(cell)
 
     def eliminate_candidate(
         self,
@@ -320,7 +319,7 @@ class SudokuSolver:
 
             if not cell.value and len(possible_values := cell.possible_values) == 1:
                 last_value = possible_values.pop()
-                self.assign_cell_value(
+                self.solve_cell_value(
                     cell=cell,
                     value=last_value,
                     msg=f"\tsolved: {cell.id_} = {last_value} (naked single)",
@@ -522,11 +521,11 @@ class SudokuSolver:
         for cell in self.puzzle_all_cells:
             if cell.value:
                 continue
+
             for house_type in HouseType:
                 self.hidden_singles(cell, house_type)
-                self.naked_singles(cell, house_type)
 
-    def assign_cell_value(self, cell: SudokuCell, value: str, msg=None):
+    def solve_cell_value(self, cell: SudokuCell, value: str, msg=None):
         if cell.value:
             print(
                 f"Already solved: {cell.id_} = {value}, probably by propogation. Attempt: {msg}"
@@ -581,7 +580,7 @@ class SudokuSolver:
         if len(cell.row.unsolved_cells) == 1:
             last_cell_in_row = next(iter(cell.row.unsolved_cells))
             remaining_unsolved_value = cell.row.unsolved_values.pop()
-            self.assign_cell_value(
+            self.solve_cell_value(
                 last_cell_in_row,
                 remaining_unsolved_value,
                 msg=f"\tsolved: {last_cell_in_row.id_} = {remaining_unsolved_value} (hidden single {HouseType.row}:{last_cell_in_row.row_id})",
@@ -603,16 +602,7 @@ class SudokuSolver:
                 continue
             c = cells_possibly_containing_missing_values[0]
             msg = f"\tSOLVED: r{c.row_id}c{c.col_id} = {missing_value} (hidden single {house_type.name}:{cell.get_house_id(house_type)})"
-            self.assign_cell_value(c, missing_value, msg)
-
-    def naked_singles(self, cell, house_type: HouseType):
-        house_cells = self.get_house(cell.get_house_id(house_type), house_type)
-        unsolved_cells = [c for c in house_cells if c.value is None]
-        for c in unsolved_cells:
-            if len(possible_values := c.possible_values) == 1:
-                remaining_value = possible_values.pop()
-                msg = f"\tSOLVED: r{c.row_id}c{c.col_id} = {remaining_value} (naked single)"
-                self.assign_cell_value(c, remaining_value, msg)
+            self.solve_cell_value(c, missing_value, msg)
 
     def get_puzzle_string(self) -> str:
         return "".join(obj.value or "_" for obj in self.puzzle_all_cells)
