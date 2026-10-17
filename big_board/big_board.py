@@ -1,25 +1,28 @@
-from pathlib import Path, PurePath
+from pathlib import Path
 
 display_dir = Path(__file__).parent
-board_path = display_dir / 'board.txt'
-numbers_dir = display_dir / 'numbers'
-board = open(board_path, 'r').read().split("\n")
-big_cells = {str(child.name).split('.')[0]: open(child, 'r').read() for child in numbers_dir.iterdir()}
+board_path = display_dir / "board.txt"
+numbers_dir = display_dir / "numbers"
+board = open(board_path, "r").read().split("\n")
+big_cells = {
+    str(child.name).split(".")[0]: open(child, "r").read()
+    for child in numbers_dir.iterdir()
+}
 
 
 def render(puzzle_cells, no_hints=False):
-    puzzle_lookup = {f"{cell.row}{cell.col}": cell for cell in puzzle_cells}
+    puzzle_lookup = {f"{cell.row_id}{cell.col_id}": cell for cell in puzzle_cells}
     big_board_str = ""
     last_cell_id = None
     last_line_number = None
     for line_number, char_number, char in _iterate_board(board):
         if line_number != last_line_number and last_line_number != None:
-            big_board_str += '\n'
+            big_board_str += "\n"
         last_line_number = line_number
-        if char != ' ':
+        if char != " ":
             big_board_str += char
             continue
-        cell_row, cell_col, big_rows = _get_cell_id(puzzle_cells, line_number, char_number)
+        cell_row, cell_col, big_rows = _get_cell_id(line_number, char_number)
         cell_id = f"{cell_row}{cell_col}"
         if cell_id == last_cell_id:
             continue
@@ -33,11 +36,14 @@ def render(puzzle_cells, no_hints=False):
 
 def _iterate_board(board):
     for line_number, line in enumerate(board):
-        for char_number, char, in enumerate(line):
+        for (
+            char_number,
+            char,
+        ) in enumerate(line):
             yield (line_number, char_number, char)
 
 
-def _get_cell_id(puzzle_cells, line_number, char_number):
+def _get_cell_id(line_number, char_number):
     cell_row, big_rows = row_lookup[line_number]
     cell_col = col_lookup[char_number]
     return (cell_row, cell_col, big_rows)
@@ -47,11 +53,13 @@ def _get_glyph(cell, no_hints):
     if cell.value:
         glyph = big_cells[cell.value]
     elif no_hints:
-        glyph = big_cells['no_hints']
+        glyph = big_cells["no_hints"]
     else:
-        chars_to_replace = ''.join(cell.impossible_values)
-        trans = str.maketrans(chars_to_replace, ''.join([' ' for i in range(len(chars_to_replace))]))
-        glyph = str.translate(big_cells['empty'], trans)
+        chars_to_replace = "".join(cell.impossible_values)
+        trans = str.maketrans(
+            chars_to_replace, "".join([" " for _ in range(len(chars_to_replace))])
+        )
+        glyph = str.translate(big_cells["empty"], trans)
     return glyph
 
 
