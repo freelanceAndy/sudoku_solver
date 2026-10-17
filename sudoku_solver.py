@@ -258,20 +258,15 @@ class SudokuSolver:
         print(self.small_board())
 
     def set_impossible_values(self):
+        for cell in self.puzzle_all_cells:
+            if cell.value is None:
+                continue
+
+            self.sees(cell)
+
         for cell in list(self.puzzle_unsolved_cell_by_id.values()):
             if cell.value:
                 continue
-
-            self.already_in_house(
-                cell, self.get_house(cell.row_id, HouseType.row), HouseType.row
-            )
-            self.already_in_house(
-                cell, self.get_house(cell.col_id, HouseType.col), HouseType.col
-            )
-            self.already_in_house(
-                cell, self.get_house(cell.block_id, HouseType.blk), HouseType.blk
-            )
-
             self.x_wing(cell)
 
         for house_type in HouseType:
@@ -299,17 +294,12 @@ class SudokuSolver:
         ]
 
     @solver
-    def already_in_house(self, cell: SudokuCell, house, house_type: HouseType):
-        for see_cell in house:
-            if see_cell.value is None:
-                continue
-            else:
-                self.eliminate_candidate(
-                    cell=cell,
-                    candidate_value=see_cell.value,
-                    message=f"{see_cell = } can see {cell.value} in {cell}",
-                    explicit_silent=False,
-                )
+    def sees(self, cell: SudokuCell):
+        """
+        For a given solved cell, eliminate that candidate value for all unsolved
+        cells in each house.
+        """
+        self.eliminate_candidate_from_see_cells(cell)
 
     def eliminate_candidate(
         self,
@@ -567,11 +557,16 @@ class SudokuSolver:
         which they can eliminate as a candidate immediately whenever a
         cell is solved.
         """
+        if cell.value is None:
+            raise ValueError(f'{cell} has no value. Nothing to "see" here.')
         for see_cell in chain(
             list(cell.row.unsolved_cells),
             list(cell.column.unsolved_cells),
             list(cell.block.unsolved_cells),
         ):
+            if see_cell.value:
+                continue
+
             self.eliminate_candidate(
                 cell=see_cell,
                 candidate_value=cell.value,
