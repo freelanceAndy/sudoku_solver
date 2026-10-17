@@ -328,7 +328,7 @@ class SudokuSolver:
             if print_board and not self.silent:
                 print(self)  # To help develop new logic to solve harder puzzles
 
-            if len(possible_values := cell.possible_values) == 1:
+            if not cell.value and len(possible_values := cell.possible_values) == 1:
                 last_value = possible_values.pop()
                 self.assign_cell_value(
                     cell=cell,
@@ -538,7 +538,9 @@ class SudokuSolver:
 
     def assign_cell_value(self, cell: SudokuCell, value: str, msg=None):
         if cell.value:
-            print(f"Already solved: {cell.id_} = {value}, probably by propogation")
+            print(
+                f"Already solved: {cell.id_} = {value}, probably by propogation. Attempt: {msg}"
+            )
             return
 
         try:
