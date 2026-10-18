@@ -60,13 +60,15 @@ class House:
             self.house_id = house_id
             self.solved_cells = set()
             self.unsolved_cells = set()
-            self.unsolved_values = ALL_VALUES.copy()
+            self.unsolved_values = defaultdict(
+                set, {value: set() for value in ALL_VALUES}
+            )
 
         self.update_manifest(cell)
 
     @property
     def id_(self) -> str:
-        return f"{self.house_type.value}_{self.house_id}"
+        return f"{self.house_type.name}_{self.house_id}"
 
     def __repr__(self) -> str:
         return self.id_
@@ -76,9 +78,15 @@ class House:
         if cell.value:
             self.unsolved_cells.discard(cell)
             self.solved_cells.add(cell)
-            self.unsolved_values.discard(cell.value)
+
+            self.unsolved_values.pop(cell.value, None)
+            for unsolved_cell_set in self.unsolved_values.values():
+                unsolved_cell_set.discard(cell)
+
         else:
             self.unsolved_cells.add(cell)
+            for unsolved_value in self.unsolved_values.values():
+                unsolved_value.add(cell)
 
 
 class SudokuCell:
@@ -143,9 +151,21 @@ class SudokuCell:
         self.column.update_manifest(self)
         self.block.update_manifest(self)
 
+    def mark_impossible_in_houses(self, candidate_value):
+        for house in (self.row, self.column, self.block):
+            try:
+                house.unsolved_values[candidate_value].discard(self)
+            except KeyError:
+                print(
+                    "Houses should never consider a value solved before a cell ",
+                    "discounts it as a candidate.",
+                )
+                raise
+
     def remove_candidate(self, candidate_value):
         if candidate_value not in self.impossible_values:
             self.impossible_values.add(candidate_value)
+            self.mark_impossible_in_houses(candidate_value)
             progress_made = True
         else:
             progress_made = False
@@ -241,6 +261,7 @@ class SudokuSolver:
             HouseType.col: self.puzzle_by_col_id,
             HouseType.blk: self.puzzle_by_block_id,
         }
+        self.puzzle_all_houses: set[House] = set()
 
         with open(self.puzzle_file_path, "r") as f:
             self.puzzle_file_str = f.read().strip()
@@ -248,6 +269,9 @@ class SudokuSolver:
         for idx, char in enumerate(self.puzzle_file_str):
             cell = SudokuCell(char, idx)
             self.puzzle_all_cells.append(cell)
+            self.puzzle_all_houses.add(cell.row)
+            self.puzzle_all_houses.add(cell.column)
+            self.puzzle_all_houses.add(cell.block)
             self.puzzle_by_cell_id[cell.id_] = cell
             self.puzzle_by_cell_row_col[f"{cell.row_id}{cell.col_id}"] = cell
             self.puzzle_by_row_id[cell.row_id].append(cell)
@@ -255,6 +279,7 @@ class SudokuSolver:
             self.puzzle_by_block_id[cell.block_id].append(cell)
             if not cell.value:
                 self.puzzle_unsolved_cell_by_id[cell.id_] = cell
+
         print(self.small_board())
 
     def set_impossible_values(self):
@@ -518,12 +543,7 @@ class SudokuSolver:
                             )
 
     def set_values(self):
-        for cell in self.puzzle_all_cells:
-            if cell.value:
-                continue
-
-            for house_type in HouseType:
-                self.hidden_singles(cell, house_type)
+        self.hidden_singles()
 
     def solve_cell_value(self, cell: SudokuCell, value: str, msg=None):
         if cell.value:
@@ -579,7 +599,7 @@ class SudokuSolver:
         """
         if len(cell.row.unsolved_cells) == 1:
             last_cell_in_row = next(iter(cell.row.unsolved_cells))
-            remaining_unsolved_value = cell.row.unsolved_values.pop()
+            remaining_unsolved_value = next(iter(cell.row.unsolved_values))
             self.solve_cell_value(
                 last_cell_in_row,
                 remaining_unsolved_value,
@@ -589,20 +609,31 @@ class SudokuSolver:
     def puzzle_solved(self):
         return len(self.puzzle_unsolved_cell_by_id) == 0
 
-    def hidden_singles(self, cell: SudokuCell, house_type: HouseType):
-        house_cells = self.get_house(cell.get_house_id(house_type), house_type)
-        unsolved_cells = [c for c in house_cells if c.value is None]
-        house_values = set([c.value for c in house_cells if c.value])
-        missing_values = ALL_VALUES - house_values
-        for missing_value in missing_values:
-            cells_possibly_containing_missing_values = [
-                c for c in unsolved_cells if missing_value in c.possible_values
-            ]
-            if len(cells_possibly_containing_missing_values) != 1:
+    def hidden_singles(self):
+        """
+        Naked Single
+        The house is missing a value. If all other unsolved cells have ruled out
+        that value but one unsolved cell has not ruled it out, then that cell
+        must contain that value.
+
+        Each time a given cell is solved, the cell tells the houses so they can
+        discards the missing value.
+
+        Each time a candidate removal is removed, the solver tells the houses
+        so they can discard the cells from each missing value.
+        """
+        for house in self.puzzle_all_houses:
+            if len(house.unsolved_values) == 0:
                 continue
-            c = cells_possibly_containing_missing_values[0]
-            msg = f"\tSOLVED: r{c.row_id}c{c.col_id} = {missing_value} (hidden single {house_type.name}:{cell.get_house_id(house_type)})"
-            self.solve_cell_value(c, missing_value, msg)
+
+            for unsolved_value, candidate_cells in list(house.unsolved_values.items()):
+                if len(candidate_cells) == 1:
+                    determined_cell = next(iter(candidate_cells))
+                    self.solve_cell_value(
+                        cell=determined_cell,
+                        value=unsolved_value,
+                        msg=f"{unsolved_value} can only belong in {determined_cell} (hidden single)",
+                    )
 
     def get_puzzle_string(self) -> str:
         return "".join(obj.value or "_" for obj in self.puzzle_all_cells)
