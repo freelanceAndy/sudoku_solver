@@ -627,13 +627,20 @@ class SudokuSolver:
                 continue
 
             for unsolved_value, candidate_cells in list(house.unsolved_values.items()):
-                if len(candidate_cells) == 1:
-                    determined_cell = next(iter(candidate_cells))
-                    self.solve_cell_value(
-                        cell=determined_cell,
-                        value=unsolved_value,
-                        msg=f"\tsolved: {unsolved_value} can only belong in {determined_cell} (hidden single)",
-                    )
+                if len(candidate_cells) != 1:
+                    continue
+
+                determined_cell = next(iter(candidate_cells))
+                if (
+                    determined_cell.value is None
+                ):  # necessary check because of propogation
+                    continue
+
+                self.solve_cell_value(
+                    cell=determined_cell,
+                    value=unsolved_value,
+                    msg=f"\tsolved: {unsolved_value} can only belong in {determined_cell} (hidden single)",
+                )
 
     def get_puzzle_string(self) -> str:
         return "".join(obj.value or "_" for obj in self.puzzle_all_cells)
