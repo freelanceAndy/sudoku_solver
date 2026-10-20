@@ -60,9 +60,7 @@ class House:
             self.house_id = house_id
             self.solved_cells = set()
             self.unsolved_cells = set()
-            self.unsolved_values = defaultdict(
-                set, {value: set() for value in ALL_VALUES}
-            )
+            self.unsolved_values = {value: set() for value in ALL_VALUES}
 
         self.update_manifest(cell)
 
@@ -87,6 +85,10 @@ class House:
             self.unsolved_cells.add(cell)
             for unsolved_value in self.unsolved_values.values():
                 unsolved_value.add(cell)
+
+    def remove_cell_from_value_candidacy(self, cell: SudokuCell, candidate_value: str):
+        if (candidate_cells := self.unsolved_values.get(candidate_value)) is not None:
+            candidate_cells.discard(cell)
 
 
 class SudokuCell:
@@ -152,15 +154,9 @@ class SudokuCell:
         self.block.update_manifest(self)
 
     def mark_impossible_in_houses(self, candidate_value):
-        for house in (self.row, self.column, self.block):
-            try:
-                house.unsolved_values[candidate_value].discard(self)
-            except KeyError:
-                print(
-                    "Houses should never consider a value solved before a cell ",
-                    "discounts it as a candidate.",
-                )
-                raise
+        self.row.remove_cell_from_value_candidacy(self, candidate_value)
+        self.column.remove_cell_from_value_candidacy(self, candidate_value)
+        self.block.remove_cell_from_value_candidacy(self, candidate_value)
 
     def remove_candidate(self, candidate_value):
         if candidate_value not in self.impossible_values:
@@ -594,16 +590,20 @@ class SudokuSolver:
 
     def propogate_hidden_singles(self, cell: SudokuCell):
         """
-        Function gets run whenever a cell is assigned in order to check for
-        downstream affects as is often the case.
+        This function gets run whenever a cell is solved.
+        Whenever a cell is solved, there's a chance that
+        other members of its houses are now easily solvable.
         """
-        if len(cell.row.unsolved_cells) == 1:
-            last_cell_in_row = next(iter(cell.row.unsolved_cells))
-            remaining_unsolved_value = next(iter(cell.row.unsolved_values))
+        for house in (cell.row, cell.column, cell.block):
+            if len(house.unsolved_cells) != 1:
+                continue
+
+            one_cell_left = next(iter(house.unsolved_cells))
+            value = next(iter(house.unsolved_values))
             self.solve_cell_value(
-                last_cell_in_row,
-                remaining_unsolved_value,
-                msg=f"\tsolved: {last_cell_in_row.id_} = {remaining_unsolved_value} (hidden single {HouseType.row}:{last_cell_in_row.row_id})",
+                cell=one_cell_left,
+                value=value,
+                msg=f"\tsolved: {one_cell_left.id_} = {value} (hidden single {house})",
             )
 
     def puzzle_solved(self):
@@ -632,7 +632,7 @@ class SudokuSolver:
                     self.solve_cell_value(
                         cell=determined_cell,
                         value=unsolved_value,
-                        msg=f"{unsolved_value} can only belong in {determined_cell} (hidden single)",
+                        msg=f"\tsolved: {unsolved_value} can only belong in {determined_cell} (hidden single)",
                     )
 
     def get_puzzle_string(self) -> str:
